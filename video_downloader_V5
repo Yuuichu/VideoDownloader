@@ -6,6 +6,7 @@ from tkinter import ttk, filedialog, messagebox, font
 import yt_dlp
 import pyperclip
 import subprocess
+import time
 
 def get_script_directory():
     if getattr(sys, 'frozen', False):
@@ -16,7 +17,7 @@ SCRIPT_DIR = get_script_directory()
 CONFIG_FILE = os.path.join(SCRIPT_DIR, "config.json")
 
 def load_config():
-    if os.path.exists(CONFIG_FILE):
+    if (CONFIG_FILE):
         with open(CONFIG_FILE, "r") as file:
             return json.load(file)
     else:
@@ -34,7 +35,7 @@ history_paths = config.get("history_paths", [])
 use_subfolders = config.get("use_subfolders", False)
 
 def get_playlist_video_links(playlist_url):
-    ydl_opts = {'quiet': True, 'extract_flat': 'yes'}
+    ydl_opts = {'quiet': True, 'extract_flat': 'yes', 'no_check_certificate': True}
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info_dict = ydl.extract_info(playlist_url, download=False)
         video_entries = info_dict.get('entries', [])
@@ -120,7 +121,7 @@ class YouTubeDownloader:
 
         self.tasks = []
 
-    def download_and_merge(self, video_url, output_directory, uploader_name=None):
+    def download_and_merge(self, video_url, output_directory, uploader_name=None, retries=3):
         if self.use_subfolders_var.get() and uploader_name:
             output_directory = os.path.join(output_directory, uploader_name)
             os.makedirs(output_directory, exist_ok=True)
@@ -129,36 +130,41 @@ class YouTubeDownloader:
         ydl_opts = {
             'format': 'bestvideo+bestaudio',
             'outtmpl': output_template,
-            'merge_output_format': 'mkv'
+            'merge_output_format': 'mkv',
+            'no_check_certificate': True
         }
 
-        try:
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(video_url)
-                formats = info.get('formats', [])
-                best_video = next((f for f in formats if f.get('vcodec') != 'none'), None)
-                video_dynamic_range = (info.get('dynamic_range') or (best_video.get('dynamic_range') if best_video else '非HDR'))
-                filename = ydl.prepare_filename(info)
-                self.log_message(f"Downloaded: {filename}")
+        for attempt in range(retries):
+            try:
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    info = ydl.extract_info(video_url)
+                    formats = info.get('formats', [])
+                    best_video = next((f for f in formats if f.get('vcodec') != 'none'), None)
+                    video_dynamic_range = (info.get('dynamic_range') or (best_video.get('dynamic_range') if best_video else '非HDR'))
+                    filename = ydl.prepare_filename(info)
+                    self.log_message(f"Downloaded: {filename}")
 
-                merged_filename = filename.rsplit('.', 1)[0] + '.mkv'
-                temp_filename = merged_filename + ".tmp.mkv"
+                    merged_filename = filename.rsplit('.', 1)[0] + '.mkv'
+                    temp_filename = merged_filename + ".tmp.mkv"
 
-                ffmpeg_command = [
-                    'ffmpeg', '-y', '-i', filename, '-c', 'copy', temp_filename
-                ]
-                subprocess.run(ffmpeg_command, check=True)
+                    ffmpeg_command = [
+                        'ffmpeg', '-y', '-i', filename, '-c', 'copy', temp_filename
+                    ]
+                    subprocess.run(ffmpeg_command, check=True)
 
-                if os.path.exists(merged_filename):
-                    os.remove(merged_filename)
+                    if os.path.exists(merged_filename):
+                        os.remove(merged_filename)
 
-                os.rename(temp_filename, merged_filename)
-                self.log_message(f"Merged to: {merged_filename}")
+                    os.rename(temp_filename, merged_filename)
+                    self.log_message(f"Merged to: {merged_filename}")
 
-                return merged_filename, video_dynamic_range
-        except Exception as e:
-            self.log_message(f"Error: {e}")
-            return None, None
+                    return merged_filename, video_dynamic_range
+            except Exception as e:
+                self.log_message(f"Error: {e}")
+                if attempt < retries - 1:
+                    time.sleep(5)
+                else:
+                    return None, None
 
     def on_download(self):
         output_directory = self.path_combobox.get()
