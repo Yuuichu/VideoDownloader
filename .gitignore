@@ -39,6 +39,8 @@ config.json
 # PyInstaller
 *.manifest
 *.spec
+build/
+dist/
 
 # Logs
 *.log
