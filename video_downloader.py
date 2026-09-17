@@ -66,25 +66,6 @@ def with_js_runtimes(ydl_opts):
             ydl_opts.setdefault('js_runtimes', {})[runtime] = {}
     return ydl_opts
 
-def get_playlist_video_links(playlist_url):
-    ydl_opts = {
-        'quiet': True,
-        'extract_flat': 'in_playlist',
-        'ignoreerrors': True
-    }
-    with_js_runtimes(ydl_opts)
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info_dict = ydl.extract_info(playlist_url, download=False)
-        video_entries = info_dict.get('entries', [])
-        video_links = []
-        for entry in video_entries:
-            if entry and entry.get('id'):
-                url = entry.get('url') or entry.get('webpage_url')
-                if not url:
-                    url = f"https://www.youtube.com/watch?v={entry.get('id')}"
-                video_links.append(url)
-        return video_links
-
 def detect_hdr_format(info_dict):
     """检测视频的 HDR 格式"""
     formats = info_dict.get('formats', [])
@@ -147,6 +128,7 @@ class DownloadThread(threading.Thread):
             'format': format_selector,
             'outtmpl': output_template,
             'merge_output_format': 'mkv',
+            'noplaylist': True,  # 单视频下载：忽略 URL 中的 list 参数，只下载该视频
             'retries': 5,
             'fragment_retries': 5,
             'progress_hooks': [self.progress_hook],
@@ -158,6 +140,8 @@ class DownloadThread(threading.Thread):
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(self.video_url)
+            if info.get('_type') == 'playlist':
+                raise Exception("检测到播放列表：请使用「➕ 添加URL」添加（会自动展开整个列表）")
             hdr_format = detect_hdr_format(info)
             filename = ydl.prepare_filename(info)
             
@@ -297,8 +281,6 @@ class YouTubeDownloader:
         button_copy.pack(side=tk.LEFT, padx=5)
         button_add = tk.Button(button_frame, text="➕ 添加URL", command=self.on_add_url)
         button_add.pack(side=tk.LEFT, padx=5)
-        button_add_playlist = tk.Button(button_frame, text="📃 添加播放列表", command=self.on_add_playlist_url)
-        button_add_playlist.pack(side=tk.LEFT, padx=5)
         
         self.download_button = tk.Button(button_frame, text="⬇️ 开始下载", command=self.on_download, bg="#4CAF50", fg="white")
         self.download_button.pack(side=tk.LEFT, padx=5)
@@ -339,6 +321,16 @@ class YouTubeDownloader:
                     self._on_download_success(item_id, filename, hdr_format)
                 elif msg_type == 'error':
                     self._on_download_error(item_id, data)
+                elif msg_type == 'expand':
+                    # 播放列表展开：主线程逐条添加（避免子线程调用 tkinter）
+                    for url in data:
+                        self.add_task(url)
+                elif msg_type == 'add_task_info':
+                    url, title, uploader, hdr = data
+                    self._add_task_to_list(url, title, uploader, hdr)
+                elif msg_type == 'update_task_info':
+                    item_id, url, title, uploader, hdr = data
+                    self._update_task_in_list(item_id, url, title, uploader, hdr)
         except Exception as e:
             self.log_message(f"⚠️ 队列处理异常: {e}")
         
@@ -492,9 +484,6 @@ class YouTubeDownloader:
     def on_add_url(self):
         self.prompt_for_urls("添加URLs")
 
-    def on_add_playlist_url(self):
-        self.prompt_for_playlist_urls("添加播放列表URL")
-
     def on_edit(self):
         selected_items = self.treeview.selection()
         if selected_items:
@@ -538,48 +527,6 @@ class YouTubeDownloader:
         url_input_box.grab_set()
         self.root.wait_window(url_input_box)
 
-    def prompt_for_playlist_urls(self, title, item_id=None, initialtext=""):
-        url_input_box = tk.Toplevel(self.root)
-        url_input_box.title(title)
-        url_input_box.geometry("600x200")
-
-        tk.Label(url_input_box, text="输入播放列表URL:").pack(padx=10, pady=5, anchor="w")
-        
-        url_input = tk.Text(url_input_box, height=5, width=80)
-        url_input.pack(padx=10, pady=10, fill=tk.BOTH, expand=True)
-        if initialtext:
-            url_input.insert(tk.END, initialtext)
-        url_input.focus_set()
-
-        def submit():
-            text = url_input.get("1.0", tk.END).strip()
-            url_input_box.destroy()
-            
-            self.log_message("🔍 正在解析播放列表...")
-            
-            def fetch_playlist():
-                try:
-                    video_urls = get_playlist_video_links(text)
-                    self.callback_queue.put(('log', None, f"📃 找到 {len(video_urls)} 个视频"))
-                    for url in video_urls:
-                        self.root.after(0, lambda u=url: self.add_task(u))
-                except Exception as e:
-                    self.callback_queue.put(('log', None, f"❌ 解析播放列表失败: {e}"))
-            
-            threading.Thread(target=fetch_playlist, daemon=True).start()
-
-        button_frame = tk.Frame(url_input_box)
-        button_frame.pack(pady=10)
-        
-        submit_button = tk.Button(button_frame, text="确定", command=submit, width=10)
-        submit_button.pack(side=tk.LEFT, padx=5)
-        cancel_button = tk.Button(button_frame, text="取消", command=url_input_box.destroy, width=10)
-        cancel_button.pack(side=tk.LEFT, padx=5)
-
-        url_input_box.transient(self.root)
-        url_input_box.grab_set()
-        self.root.wait_window(url_input_box)
-
     def add_task(self, video_url):
         if not video_url or not video_url.startswith('http'):
             return
@@ -594,20 +541,44 @@ class YouTubeDownloader:
         
         def fetch_info():
             try:
-                ydl_opts = {
+                # 第一步：flat 模式快速探测 URL 类型（避免对播放列表做完整提取）
+                probe_opts = {
                     'quiet': True,
-                    'extract_flat': False
+                    'extract_flat': 'in_playlist',
+                    'noplaylist': True,
                 }
-                with_js_runtimes(ydl_opts)
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                with_js_runtimes(probe_opts)
+                with yt_dlp.YoutubeDL(probe_opts) as ydl:
+                    info = ydl.extract_info(video_url, download=False)
+
+                if info.get('_type') == 'playlist':
+                    # 播放列表：自动展开为纯视频链接，交给主线程逐条添加
+                    video_urls = []
+                    for entry in (info.get('entries') or []):
+                        if entry and entry.get('id'):
+                            video_urls.append(f"https://www.youtube.com/watch?v={entry.get('id')}")
+                    if not video_urls:
+                        self.callback_queue.put(('log', None, "❌ 播放列表为空或解析失败"))
+                        return
+                    self.callback_queue.put(('log', None, f"📃 检测到播放列表，找到 {len(video_urls)} 个视频，正在添加..."))
+                    self.callback_queue.put(('expand', None, video_urls))
+                    return
+
+                # 第二步：单个视频，完整提取详细信息（含上传者/HDR）
+                full_opts = {
+                    'quiet': True,
+                    'noplaylist': True,  # 忽略 URL 中的 list 参数，只提取该视频
+                }
+                with_js_runtimes(full_opts)
+                with yt_dlp.YoutubeDL(full_opts) as ydl:
                     info_dict = ydl.extract_info(video_url, download=False)
-                    video_title = info_dict.get('title', 'No title')
-                    uploader_name = info_dict.get('uploader') or info_dict.get('channel') or 'Unknown'
-                    hdr_format = detect_hdr_format(info_dict)
-                    
-                    self.root.after(0, lambda: self._add_task_to_list(
-                        video_url, video_title, uploader_name, hdr_format
-                    ))
+                video_title = info_dict.get('title', 'No title')
+                uploader_name = info_dict.get('uploader') or info_dict.get('channel') or 'Unknown'
+                hdr_format = detect_hdr_format(info_dict)
+
+                self.callback_queue.put(('add_task_info', None, (
+                    video_url, video_title, uploader_name, hdr_format
+                )))
             except Exception as e:
                 self.callback_queue.put(('log', None, f"❌ 获取视频信息失败: {e}"))
         
@@ -627,19 +598,32 @@ class YouTubeDownloader:
         
         def fetch_info():
             try:
-                ydl_opts = {
-                    'quiet': True
+                # flat 模式快速探测：区分播放列表与单个视频
+                probe_opts = {
+                    'quiet': True,
+                    'extract_flat': 'in_playlist',
+                    'noplaylist': True,
                 }
-                with_js_runtimes(ydl_opts)
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                with_js_runtimes(probe_opts)
+                with yt_dlp.YoutubeDL(probe_opts) as ydl:
+                    info = ydl.extract_info(video_url, download=False)
+                if info.get('_type') == 'playlist':
+                    self.callback_queue.put(('log', None, "⚠️ 编辑仅支持单个视频，播放列表请用「➕ 添加URL」添加"))
+                    return
+                full_opts = {
+                    'quiet': True,
+                    'noplaylist': True,  # 忽略 URL 中的 list 参数，只提取该视频
+                }
+                with_js_runtimes(full_opts)
+                with yt_dlp.YoutubeDL(full_opts) as ydl:
                     info_dict = ydl.extract_info(video_url, download=False)
-                    video_title = info_dict.get('title', 'No title')
-                    uploader_name = info_dict.get('uploader') or info_dict.get('channel') or 'Unknown'
-                    hdr_format = detect_hdr_format(info_dict)
-                    
-                    self.root.after(0, lambda: self._update_task_in_list(
-                        item_id, video_url, video_title, uploader_name, hdr_format
-                    ))
+                video_title = info_dict.get('title', 'No title')
+                uploader_name = info_dict.get('uploader') or info_dict.get('channel') or 'Unknown'
+                hdr_format = detect_hdr_format(info_dict)
+
+                self.callback_queue.put(('update_task_info', None, (
+                    item_id, video_url, video_title, uploader_name, hdr_format
+                )))
             except Exception as e:
                 self.callback_queue.put(('log', None, f"❌ 更新视频信息失败: {e}"))
         
