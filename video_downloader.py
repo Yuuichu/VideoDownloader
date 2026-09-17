@@ -13,6 +13,7 @@ from tkinter import ttk, filedialog, messagebox
 import yt_dlp
 import pyperclip
 import subprocess
+import shutil
 import time
 import threading
 from queue import Queue
@@ -53,13 +54,25 @@ default_download_path = config.get("default_path", "")
 history_paths = config.get("history_paths", [])
 use_subfolders = config.get("use_subfolders", False)
 
+def with_js_runtimes(ydl_opts):
+    """为 yt-dlp 配置可用的 JS 运行时（node/deno）。
+
+    新版 yt-dlp 提取 YouTube 完整格式需要 JS 运行时 + yt-dlp-ejs；
+    探测 PATH 中可用的运行时并写入 ydl_opts，找不到则保持原样。
+    注意：js_runtimes 的取值必须是配置字典（无额外配置时传空字典），传 None 会崩溃。
+    """
+    for runtime in ('node', 'deno'):
+        if shutil.which(runtime):
+            ydl_opts.setdefault('js_runtimes', {})[runtime] = {}
+    return ydl_opts
+
 def get_playlist_video_links(playlist_url):
     ydl_opts = {
         'quiet': True,
         'extract_flat': 'in_playlist',
-        'no_check_certificate': True,
         'ignoreerrors': True
     }
+    with_js_runtimes(ydl_opts)
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info_dict = ydl.extract_info(playlist_url, download=False)
         video_entries = info_dict.get('entries', [])
@@ -134,7 +147,6 @@ class DownloadThread(threading.Thread):
             'format': format_selector,
             'outtmpl': output_template,
             'merge_output_format': 'mkv',
-            'no_check_certificate': True,
             'retries': 5,
             'fragment_retries': 5,
             'progress_hooks': [self.progress_hook],
@@ -142,6 +154,7 @@ class DownloadThread(threading.Thread):
             'quiet': False,
             'no_warnings': False,
         }
+        with_js_runtimes(ydl_opts)
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(self.video_url)
@@ -161,9 +174,8 @@ class DownloadThread(threading.Thread):
                 temp_filename = merged_filename + ".tmp.mkv"
 
                 ffmpeg_command = [
-                    'ffmpeg', '-y', '-i', filename, 
+                    'ffmpeg', '-y', '-i', filename,
                     '-c', 'copy',
-                    '-movflags', '+faststart',
                     temp_filename
                 ]
                 
@@ -178,7 +190,7 @@ class DownloadThread(threading.Thread):
                     if os.path.exists(filename) and filename != merged_filename:
                         try:
                             os.remove(filename)
-                        except:
+                        except OSError:
                             pass
                     
                     self.callback_queue.put(('log', None, f"已合并: {merged_filename}"))
@@ -327,8 +339,8 @@ class YouTubeDownloader:
                     self._on_download_success(item_id, filename, hdr_format)
                 elif msg_type == 'error':
                     self._on_download_error(item_id, data)
-        except:
-            pass
+        except Exception as e:
+            self.log_message(f"⚠️ 队列处理异常: {e}")
         
         self.root.after(100, self._process_queue)
     
@@ -342,7 +354,7 @@ class YouTubeDownloader:
                     new_values[5] = status
                     self.treeview.item(child, values=new_values)
                     break
-        except:
+        except Exception:
             pass
     
     def _on_download_success(self, item_id, filename, hdr_format):
@@ -584,9 +596,9 @@ class YouTubeDownloader:
             try:
                 ydl_opts = {
                     'quiet': True,
-                    'no_check_certificate': True,
                     'extract_flat': False
                 }
+                with_js_runtimes(ydl_opts)
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                     info_dict = ydl.extract_info(video_url, download=False)
                     video_title = info_dict.get('title', 'No title')
@@ -616,9 +628,9 @@ class YouTubeDownloader:
         def fetch_info():
             try:
                 ydl_opts = {
-                    'quiet': True,
-                    'no_check_certificate': True
+                    'quiet': True
                 }
+                with_js_runtimes(ydl_opts)
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                     info_dict = ydl.extract_info(video_url, download=False)
                     video_title = info_dict.get('title', 'No title')
@@ -691,7 +703,7 @@ if __name__ == "__main__":
     try:
         from ctypes import windll
         windll.shcore.SetProcessDpiAwareness(1)
-    except:
+    except Exception:
         pass
     
     root = tk.Tk()
