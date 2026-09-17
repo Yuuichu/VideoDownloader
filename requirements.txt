@@ -1,3 +1,2 @@
-yt-dlp>=2024.12.1
-pyperclip>=1.8.2
-
+yt-dlp>=2026.08.19
+pyperclip>=1.11.0

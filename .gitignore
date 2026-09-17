@@ -26,6 +26,10 @@ ENV/
 env/
 .venv/
 
+# Local tooling temp
+.dsh-wheels/
+.dsh-tmp/
+
 # IDE
 .idea/
 .vscode/
