@@ -49,8 +49,8 @@ python video_downloader.py
 1. **Set download path** - Choose where to save videos
 2. **Add videos** - Use one of these methods:
    - Click "📋 从剪贴板粘贴" to paste URLs from clipboard
-   - Click "➕ 添加URL" to manually enter URLs
-   - Click "📃 添加播放列表" to add a playlist URL
+   - Click "➕ 添加URL" to add URLs - playlist links are detected and expanded automatically
+     (a playlist URL adds all its videos, a single video URL adds just that one)
 3. **Select videos** - Use Ctrl+A to select all, or click individual items
 4. **Download** - Click "⬇️ 开始下载" to start downloading
 
