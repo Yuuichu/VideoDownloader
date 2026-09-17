@@ -29,6 +29,7 @@ env/
 # Local tooling temp
 .dsh-wheels/
 .dsh-tmp/
+.dsh-vision-toolkit/
 
 # IDE
 .idea/
