@@ -17,8 +17,8 @@ if sys.platform == 'win32':
 
 # 配置
 APP_NAME = "VideoDownloader"
-MAIN_SCRIPT = "video_downloader.py"
-VERSION = "1.0.0"
+MAIN_SCRIPT = "video_downloader_qt.py"
+VERSION = "2.0.0"
 
 def install_pyinstaller():
     """确保 PyInstaller 已安装"""
@@ -86,10 +86,10 @@ def create_zip():
     return zip_path
 
 def main():
-    print("""
+    print(f"""
 ========================================
      VideoDownloader Build Script
-              v1.0.0
+              v{VERSION}
 ========================================
 """)
     
