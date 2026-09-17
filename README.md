@@ -14,7 +14,7 @@ A YouTube video downloader with GUI, built with Python and yt-dlp.
 
 ## Requirements
 
-- Python 3.8+
+- Python 3.10+
 - FFmpeg (for video merging)
 - yt-dlp
 - pyperclip
@@ -27,8 +27,11 @@ git clone https://github.com/YOUR_USERNAME/VideoDownloader.git
 cd VideoDownloader
 ```
 
-2. Install dependencies:
+2. Install dependencies (recommended: use a virtual environment):
 ```bash
+python -m venv .venv
+.venv\Scripts\activate        # Windows
+# source .venv/bin/activate   # macOS / Linux
 pip install -r requirements.txt
 ```
 
